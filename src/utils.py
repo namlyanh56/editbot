@@ -1,0 +1,96 @@
+from typing import Tuple
+from PIL import Image, ImageFont, ImageDraw
+import numpy as np
+import cv2 as cv
+
+def sample_text_color(img_pil, bbox):
+    """
+    Ambil warna rata-rata glyph di dalam bbox dengan pendekatan mask intensitas.
+    """
+    x,y,w,h = bbox
+    region = img_pil.crop((x, y, x+w, y+h))
+    g = region.convert("L")
+    arr = np.array(g)
+    # Ambil 30% piksel tergelap (diasumsikan teks pada light mode) atau terang (dark mode)
+    flat = arr.flatten()
+    perc_dark = np.percentile(flat, 30)
+    perc_light = np.percentile(flat, 70)
+    mean_all = np.mean(flat)
+    # Mode deteksi sederhana:
+    light_mode = mean_all > 128
+    rgb = np.array(region)
+    if light_mode:
+        # teks gelap => ambil piksel yang <= perc_dark + 5
+        mask = arr <= (perc_dark + 5)
+        if mask.sum() < 10:  # fallback
+            return (17,17,17)
+        cols = rgb[mask]
+        avg = cols.mean(axis=0)
+        return tuple(int(c) for c in avg)
+    else:
+        # teks terang => ambil piksel >= perc_light - 5
+        mask = arr >= (perc_light - 5)
+        if mask.sum() < 10:
+            return (233,237,239)
+        cols = rgb[mask]
+        avg = cols.mean(axis=0)
+        return tuple(int(c) for c in avg)
+
+def detect_light_mode(img_pil):
+    small = img_pil.resize((32,32))
+    arr = np.array(small.convert("L"))
+    return arr.mean() > 128
+
+def estimate_background_color(img_np, bbox, pad=4):
+    h_img, w_img = img_np.shape[:2]
+    x,y,w,h = bbox
+    # Ambil border sekitar bbox (atas & bawah)
+    samples = []
+    # Atas
+    y_top = max(0, y - pad - 4)
+    if y_top >= 0:
+        samples.append(img_np[y_top:y_top+4, x:x+w])
+    # Bawah
+    y_bottom = min(h_img-4, y + h + pad)
+    if y_bottom+4 <= h_img:
+        samples.append(img_np[y_bottom:y_bottom+4, x:x+w])
+    if not samples:
+        return (255,255,255)
+    cat = np.concatenate(samples, axis=0)
+    med = np.median(cat.reshape(-1,3), axis=0)
+    return tuple(int(v) for v in med)
+
+def compute_font_size_for_height(font_path, target_height, test_text="0123456789"):
+    # Binary search font size
+    low, high = 5, 400
+    best = low
+    while low <= high:
+        mid = (low + high)//2
+        font = ImageFont.truetype(font_path, mid)
+        bbox = font.getbbox(test_text)
+        height = bbox[3]-bbox[1]
+        if height <= target_height:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    return best
+
+def render_text_supersampled(text, font_path, font_size, color, scale=3):
+    font = ImageFont.truetype(font_path, font_size*scale)
+    bbox = font.getbbox(text)
+    w = bbox[2]-bbox[0]
+    h = bbox[3]-bbox[1]
+    from PIL import Image
+    img = Image.new("RGBA", (w, h), (0,0,0,0))
+    draw = ImageDraw.Draw(img)
+    draw.text((-bbox[0], -bbox[1]), text, font=font, fill=color)
+    # Downscale
+    target_w = max(1, w//scale)
+    target_h = max(1, h//scale)
+    img_small = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    return img_small
+
+def variance_luminance(patch):
+    gray = cv.cvtColor(patch, cv.COLOR_BGR2GRAY)
+    return gray.var()

@@ -3,21 +3,26 @@ from PIL import Image, ImageFont, ImageDraw
 import numpy as np
 import cv2 as cv
 import os
-from pathlib import Path
 
 def get_safe_font_path(preferred_path: str) -> str:
     """
-    Kembalikan path font yang valid. Jika preferred tidak ada, coba beberapa fallback.
+    Kembalikan path font valid; kalau preferred rusak atau tidak bisa dibuka,
+    fallback ke font sistem.
     """
     candidates = [
         preferred_path,
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
     ]
     for c in candidates:
         if c and os.path.exists(c):
-            return c
-    raise FileNotFoundError("Tidak menemukan font yang bisa dipakai.")
+            try:
+                ImageFont.truetype(c, 16)
+                return c
+            except Exception:
+                continue
+    raise FileNotFoundError("Tidak menemukan font TTF valid (preferred & fallback gagal).")
 
 def sample_text_color(img_pil, bbox):
     x,y,w,h = bbox
@@ -44,8 +49,7 @@ def sample_text_color(img_pil, bbox):
     return tuple(int(c) for c in avg)
 
 def detect_light_mode(img_pil):
-    small = img_pil.resize((32,32))
-    arr = np.array(small.convert("L"))
+    arr = np.array(img_pil.resize((32,32)).convert("L"))
     return arr.mean() > 128
 
 def estimate_background_color(img_np, bbox, pad=4):

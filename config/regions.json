@@ -1,0 +1,28 @@
+{
+  "profiles": [
+    {
+      "name": "android_default_light",
+      "match_min_width": 600,
+      "match_max_width": 1600,
+      "region": {
+        "x_pct": 0.40,
+        "y_pct": 0.135,
+        "w_pct": 0.15,
+        "h_pct": 0.030
+      },
+      "notes": "Perkiraan area angka anggota dekat header grup"
+    },
+    {
+      "name": "android_default_dark",
+      "match_min_width": 600,
+      "match_max_width": 1600,
+      "region": {
+        "x_pct": 0.40,
+        "y_pct": 0.135,
+        "w_pct": 0.15,
+        "h_pct": 0.030
+      },
+      "notes": "Dark mode sama untuk fallback awal"
+    }
+  ]
+}

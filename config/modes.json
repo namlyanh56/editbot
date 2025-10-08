@@ -1,0 +1,20 @@
+{
+  "modes": {
+    "android_light": {
+      "line_region": { "x_pct": 0.22, "y_pct": 0.155, "w_pct": 0.56, "h_pct": 0.045 },
+      "note": "Baris: Grup · NN anggota (Android Light)"
+    },
+    "android_dark": {
+      "line_region": { "x_pct": 0.22, "y_pct": 0.165, "w_pct": 0.56, "h_pct": 0.045 },
+      "note": "Android Dark"
+    },
+    "ios_light": {
+      "line_region": { "x_pct": 0.18, "y_pct": 0.205, "w_pct": 0.64, "h_pct": 0.055 },
+      "note": "iOS Light"
+    },
+    "ios_dark": {
+      "line_region": { "x_pct": 0.18, "y_pct": 0.205, "w_pct": 0.64, "h_pct": 0.055 },
+      "note": "iOS Dark (perkiraan awal sama)"
+    }
+  }
+}

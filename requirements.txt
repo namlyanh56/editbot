@@ -1,0 +1,6 @@
+pillow==10.4.0
+pytesseract==0.3.13
+opencv-python==4.10.0.84
+python-telegram-bot==21.4
+numpy==1.26.4
+python-dotenv==1.0.1

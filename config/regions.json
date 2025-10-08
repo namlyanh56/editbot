@@ -2,51 +2,38 @@
   "profiles": [
     {
       "name": "android_default_light",
-      "match_min_width": 600,
-      "match_max_width": 1600,
-      "region": {
-        "x_pct": 0.38,
-        "y_pct": 0.155,
-        "w_pct": 0.18,
-        "h_pct": 0.030
-      },
-      "notes": "Android Light - area 'Grup · NN anggota'"
+      "match_min_width": 400,
+      "match_max_width": 2000,
+      "region": { "x_pct": 0.30, "y_pct": 0.155, "w_pct": 0.40, "h_pct": 0.040 },
+      "notes": "Android Light"
     },
     {
       "name": "android_default_dark",
-      "match_min_width": 600,
-      "match_max_width": 1600,
-      "region": {
-        "x_pct": 0.38,
-        "y_pct": 0.155,
-        "w_pct": 0.18,
-        "h_pct": 0.030
-      },
+      "match_min_width": 400,
+      "match_max_width": 2000,
+      "region": { "x_pct": 0.30, "y_pct": 0.165, "w_pct": 0.40, "h_pct": 0.040 },
       "notes": "Android Dark"
     },
     {
       "name": "ios_light",
-      "match_min_width": 600,
-      "match_max_width": 1600,
-      "region": {
-        "x_pct": 0.36,
-        "y_pct": 0.205,
-        "w_pct": 0.22,
-        "h_pct": 0.035
-      },
-      "notes": "iOS Light mode perkiraan"
+      "match_min_width": 400,
+      "match_max_width": 2000,
+      "region": { "x_pct": 0.28, "y_pct": 0.205, "w_pct": 0.44, "h_pct": 0.045 },
+      "notes": "iOS Light"
     },
     {
       "name": "ios_dark",
-      "match_min_width": 600,
-      "match_max_width": 1600,
-      "region": {
-        "x_pct": 0.36,
-        "y_pct": 0.205,
-        "w_pct": 0.22,
-        "h_pct": 0.035
-      },
-      "notes": "iOS Dark (penyesuaian sama dulu)"
+      "match_min_width": 400,
+      "match_max_width": 2000,
+      "region": { "x_pct": 0.28, "y_pct": 0.205, "w_pct": 0.44, "h_pct": 0.045 },
+      "notes": "iOS Dark"
+    },
+    {
+      "name": "generic_central",
+      "match_min_width": 300,
+      "match_max_width": 3000,
+      "region": { "x_pct": 0.20, "y_pct": 0.12, "w_pct": 0.60, "h_pct": 0.18 },
+      "notes": "Fallback sangat luas – dipakai terakhir"
     }
   ]
 }

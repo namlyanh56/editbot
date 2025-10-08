@@ -1,21 +1,4 @@
-"""
-detector.py
-Menyediakan dua fungsi yang diimpor bot.py:
- - ocr_find_member_number(img_pil, debug=False)
- - load_fallback_region(img_pil, regions_path="config/regions.json")
-
-Strategi ocr_find_member_number:
- 1. Preprocess (resize & histogram equalize).
- 2. OCR full -> token data (pytesseract image_to_data).
- 3. Gabungkan digit berurutan yang terpisah (1 2 3 -> 123).
- 4. Cari anchor token 'anggota' / 'members' -> angka di kiri baris yang sama (tinggi hampir sama).
- 5. Jika gagal, regex pada text gabungan "Grup ..." -> mapping kembali ke token angka.
- 6. Jika tetap gagal, return None (bot akan fallback ke load_fallback_region).
-"""
-
-import json
-import re
-import os
+import json, re, os
 from typing import Optional, Tuple, List
 from PIL import Image, ImageDraw, ImageOps
 import numpy as np
@@ -23,13 +6,10 @@ import pytesseract
 from pytesseract import Output
 from .config import TESSERACT_CMD, OCR_LANG
 
-# Konfigurasi path tesseract bila disediakan
 if TESSERACT_CMD:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
 WHITELIST = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz·:"
-
-# ---------- Preprocess ----------
 
 def _preprocess(img: Image.Image) -> Image.Image:
     w, h = img.size
@@ -48,13 +28,7 @@ def _hist_eq(arr: np.ndarray) -> np.ndarray:
     cdf = cdf.astype(np.uint8)
     return cdf[flat].reshape(arr.shape)
 
-# ---------- OCR helpers ----------
-
 def _merge_digit_tokens(tokens: List[Tuple[int,str,int,int,int,int]]) -> List[Tuple[int,str,int,int,int,int]]:
-    """
-    Gabungkan token digit tunggal yang sebaris menjadi satu angka.
-    tokens item: (idx, text, x, y, w, h)
-    """
     merged = []
     buf = []
     baseline_y = None
@@ -74,7 +48,6 @@ def _merge_digit_tokens(tokens: List[Tuple[int,str,int,int,int,int]]) -> List[Tu
     return merged
 
 def _collapse(buf):
-    # buf: list of (idx,t,x,y,w,h) digit tunggal
     text = "".join(b[1] for b in buf)
     x0 = min(b[2] for b in buf)
     y0 = min(b[3] for b in buf)
@@ -82,117 +55,113 @@ def _collapse(buf):
     hmax = max(b[5] for b in buf)
     return (buf[0][0], text, x0, y0, x1 - x0, hmax)
 
-def _save_debug_image(pre, boxes, name="debug_ocr.png"):
-    try:
-        dbg = pre.convert("RGB").copy()
-        dr = ImageDraw.Draw(dbg)
-        for (x,y,w,h,t) in boxes:
-            dr.rectangle([x,y,x+w,y+h], outline="red", width=2)
-            dr.text((x, max(0,y-12)), t, fill="red")
-        dbg.save(name)
-    except Exception:
-        pass
-
-# ---------- Public OCR function ----------
-
-def ocr_find_member_number(img_pil: Image.Image, debug: bool=False) -> Optional[Tuple[int,int,int,int,str]]:
-    """
-    Return (x,y,w,h,number) atau None.
-    """
+def _tokens(img_pil: Image.Image):
     pre = _preprocess(img_pil)
-
     cfg = f"--psm 6 -c tessedit_char_whitelist={WHITELIST}"
     data = pytesseract.image_to_data(pre, output_type=Output.DICT, lang=OCR_LANG, config=cfg)
-
-    tokens_raw = []
+    toks = []
     for i,txt in enumerate(data['text']):
         t = txt.strip()
         if not t: 
             continue
-        tokens_raw.append((
-            i,
-            t,
-            data['left'][i],
-            data['top'][i],
-            data['width'][i],
-            data['height'][i]
+        toks.append((
+            i,t,
+            data['left'][i], data['top'][i],
+            data['width'][i], data['height'][i]
         ))
+    return pre, toks
 
-    if not tokens_raw:
-        return None
-
-    tokens = _merge_digit_tokens(tokens_raw)
-
-    # 1. Anchor method (anggota/members)
-    anchors = [tok for tok in tokens if tok[1].lower() in ("anggota","members")]
+def detect_members_line(img_pil: Image.Image) -> Optional[Tuple[int,int,int,int,str]]:
+    """
+    Deteksi angka di baris 'Grup · NN anggota'
+    Return (x,y,w,h,number)
+    """
+    pre, toks = _tokens(img_pil)
+    if not toks: return None
+    merged = _merge_digit_tokens(toks)
+    anchors = [t for t in merged if t[1].lower() in ("anggota","members")]
     candidates = []
-    for anchor in anchors:
-        a_idx,a_text,a_x,a_y,a_w,a_h = anchor
-        # Mundur beberapa token untuk cari angka
-        for prev in reversed(tokens[:tokens.index(anchor)]):
+    for a in anchors:
+        a_y = a[3]; a_h = a[5]
+        idxa = merged.index(a)
+        for prev in reversed(merged[:idxa]):
             if re.fullmatch(r"\d{1,5}", prev[1]) and abs(prev[3]-a_y) < max(prev[5],a_h)*0.7:
-                candidates.append(prev)
-                break
-
-    if candidates:
-        # pilih angka dengan h terkecil (lebih konsisten) atau paling kiri
-        best = sorted(candidates, key=lambda c: (c[3], c[2]))[0]
-        _, num, x, y, w, h = best
-        if debug:
-            _save_debug_image(pre, [(x,y,w,h,num)], "debug_anchor.png")
-        # scale back
-        scale_x = img_pil.width / pre.width
-        scale_y = img_pil.height / pre.height
-        return (int(x*scale_x), int(y*scale_y), int(w*scale_x), int(h*scale_y), num)
-
-    # 2. Regex fallback
-    full_text = " ".join(t[1] for t in tokens)
-    full_text_norm = full_text.replace("•","·")
-    rgx_list = [
-        r"Grup\s*[·\.\-]?\s*(\d{1,5})\s+anggota",
-        r"Group\s*[·\.\-]?\s*(\d{1,5})\s+members"
-    ]
-    target_num = None
-    for rg in rgx_list:
-        m = re.search(rg, full_text_norm, flags=re.IGNORECASE)
+                candidates.append(prev); break
+    if not candidates:
+        # regex fallback
+        line_text = " ".join(t[1] for t in merged)
+        line_text = line_text.replace("•","·")
+        m = re.search(r"(?:Grup|Group)\s*[·\.\-]?\s*(\d{1,5})\s+(?:anggota|members)", line_text, re.IGNORECASE)
         if m:
-            target_num = m.group(1)
-            break
-    if target_num:
-        # cari token angka sama
-        for tok in tokens:
-            if tok[1] == target_num:
-                _, num, x,y,w,h = tok
-                scale_x = img_pil.width / pre.width
-                scale_y = img_pil.height / pre.height
-                return (int(x*scale_x), int(y*scale_y), int(w*scale_x), int(h*scale_y), num)
+            target = m.group(1)
+            for t in merged:
+                if t[1] == target:
+                    candidates.append(t); break
+    if not candidates: return None
 
-    return None
+    best = candidates[0]
+    scale_x = img_pil.width / pre.width
+    scale_y = img_pil.height / pre.height
+    _, num, x,y,w,h = best
+    return int(x*scale_x), int(y*scale_y), int(w*scale_x), int(h*scale_y), num
 
-# ---------- Fallback manual region ----------
+def detect_title_trailing_number(img_pil: Image.Image) -> Optional[Tuple[int,int,int,int,str]]:
+    """
+    Deteksi angka trailing pada judul (contoh: 'Freelance 62')
+    Heuristik: satu line dengan huruf kemudian spasi lalu digit; digit cluster paling kanan di upper area.
+    """
+    pre, toks = _tokens(img_pil)
+    if not toks: return None
+    # cluster by y (line grouping kasar)
+    lines = []
+    for tok in toks:
+        _,text,x,y,w,h = tok
+        placed = False
+        for line in lines:
+            if abs(line['y'] - y) < h*0.6:
+                line['tokens'].append(tok); placed = True; break
+        if not placed:
+            lines.append({'y': y, 'tokens': [tok]})
+    # sort lines near top
+    lines.sort(key=lambda l: l['y'])
+    top_lines = lines[:5]
+    candidate = None
+    for ln in top_lines:
+        ln['tokens'].sort(key=lambda t: t[2])
+        texts = [t[1] for t in ln['tokens']]
+        joined = " ".join(texts)
+        m = re.search(r"[A-Za-zÀ-ÿ0-9]+?\s+(\d{1,5})$", joined)
+        if m:
+            num = m.group(1)
+            # cari token numerik di line
+            for t in reversed(ln['tokens']):
+                if t[1] == num:
+                    _,_,x,y,w,h = t
+                    scale_x = img_pil.width / pre.width
+                    scale_y = img_pil.height / pre.height
+                    return int(x*scale_x), int(y*scale_y), int(w*scale_x), int(h*scale_y), num
+    return candidate
 
-def load_fallback_region(img_pil: Image.Image, regions_path="config/regions.json") -> Optional[Tuple[int,int,int,int]]:
+def ocr_find_member_number(img_pil: Image.Image, debug=False):
+    # Kompatibilitas belakang: tetap arahkan ke detect_members_line
+    return detect_members_line(img_pil)
+
+def load_fallback_region(img_pil: Image.Image, regions_path="config/regions.json"):
     if not os.path.exists(regions_path):
         return None
-    try:
-        with open(regions_path,'r',encoding='utf-8') as f:
-            cfg = json.load(f)
-    except Exception:
-        return None
+    with open(regions_path,'r',encoding='utf-8') as f:
+        cfg = json.load(f)
     w,h = img_pil.size
-    profiles = cfg.get("profiles", [])
-    # Prefer yang bukan generic (priority 1), generic (priority 2)
-    candidates = []
-    for p in profiles:
+    cands = []
+    for p in cfg.get("profiles", []):
         if p["match_min_width"] <= w <= p["match_max_width"]:
             r = p["region"]
             x = int(r["x_pct"] * w)
             y = int(r["y_pct"] * h)
             ww = int(r["w_pct"] * w)
             hh = int(r["h_pct"] * h)
-            priority = 2 if "generic" in p["name"] else 1
-            candidates.append((priority,(x,y,ww,hh)))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: x[0])
-    return candidates[0][1]
+            pr = 2 if "generic" in p["name"] else 1
+            cands.append((pr,(x,y,ww,hh)))
+    if not cands: return None
+    cands.sort(key=lambda z: z[0])
+    return cands[0][1]

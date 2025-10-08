@@ -7,7 +7,7 @@ import pytesseract
 from pytesseract import Output
 from .config import OCR_LANG
 
-# Muat konfigurasi mode
+# Muat konfigurasi mode (file: config/modes.json)
 with open("config/modes.json","r",encoding="utf-8") as f:
     MODES_CFG = json.load(f)["modes"]
 
@@ -36,7 +36,8 @@ def ocr_line_number(line_img: Image.Image):
     tokens = []
     for i in range(n):
         t = data['text'][i].strip()
-        if not t: continue
+        if not t:
+            continue
         tokens.append((
             t,
             data['left'][i],
@@ -44,17 +45,20 @@ def ocr_line_number(line_img: Image.Image):
             data['width'][i],
             data['height'][i]
         ))
-    # Anchor method
+
+    # Anchor method: cari 'anggota' / 'members' lalu angka sebelum anchor
     anchors = [t for t in tokens if t[0].lower() in ANCHOR_WORDS]
     for a in anchors:
         idx_a = tokens.index(a)
         ax, ay, aw, ah = a[1], a[2], a[3], a[4]
         for prev in reversed(tokens[:idx_a]):
+            # Pastikan prev satu baris (y hampir sama) & isinya angka
             if re.fullmatch(DIGIT_REGEX, prev[0]) and abs(prev[2]-ay) < max(prev[4], ah)*0.7:
                 return {
                     "number": prev[0],
                     "bbox": (prev[1], prev[2], prev[3], prev[4])
                 }
+
     # Regex fallback pada gabungan string
     joined = " ".join(t[0] for t in tokens)
     m = re.search(r"(?:Grup|Group)\s*[·\.\-]?\s*(\d{1,5})\s+(?:anggota|members)", joined, re.IGNORECASE)
@@ -67,7 +71,9 @@ def ocr_line_number(line_img: Image.Image):
 
 def contour_digit_fallback(line_img: Image.Image):
     """
-    Cari cluster digit dengan threshold jika OCR gagal.
+    Jika OCR gagal: threshold & cari cluster digit.
+    Tidak mengembalikan 'number' (karena kita tidak membaca nilainya),
+    hanya bounding box untuk tempat menimpa.
     """
     g = line_img.convert("L")
     arr = np.array(g)
@@ -78,19 +84,20 @@ def contour_digit_fallback(line_img: Image.Image):
     boxes = []
     for c in contours:
         x,y,w,h = cv.boundingRect(c)
-        if h < h_line*0.3 or h > h_line*1.2:  # filter noise / outlier tinggi
+        # Saring ukuran wajar untuk angka
+        if h < h_line*0.3 or h > h_line*1.2:
             continue
-        if w > h*3.5:   # kemungkinan kata, bukan digit cluster
+        if w > h*3.5:
             continue
         boxes.append((x,y,w,h))
     if not boxes:
         return None
     boxes = sorted(boxes, key=lambda b: b[0])
-    # gabung berdekatan
+    # Gabungkan box berdekatan menjadi satu cluster
     merged = []
     cur = list(boxes[0])
     for b in boxes[1:]:
-        if b[0] <= cur[0]+cur[2]+6:
+        if b[0] <= cur[0] + cur[2] + 6:
             x0 = min(cur[0], b[0])
             y0 = min(cur[1], b[1])
             x1 = max(cur[0]+cur[2], b[0]+b[2])
@@ -100,11 +107,20 @@ def contour_digit_fallback(line_img: Image.Image):
             merged.append(tuple(cur))
             cur = list(b)
     merged.append(tuple(cur))
-    # pilih cluster dengan rasio w/h wajar
+    # Pilih cluster representatif
     best = sorted(merged, key=lambda m: (abs((m[2]/(m[3]+1e-6))-2.0), m[0]))[0]
     return {"number": None, "bbox": best}
 
 def detect_number_with_mode(full_img: Image.Image, mode_name: str):
+    """
+    Return dict:
+      {
+        "old_number": <angka atau '?'>,
+        "bbox_global": (x,y,w,h),
+        "method": "ocr_mode" | "contour_mode"
+      }
+    atau None kalau gagal total.
+    """
     line_img, (lx,ly,lw,lh) = crop_line(full_img, mode_name)
     res = ocr_line_number(line_img)
     if res:
@@ -123,26 +139,3 @@ def detect_number_with_mode(full_img: Image.Image, mode_name: str):
             "method": "contour_mode"
         }
     return None
-```
-
-````json name=config/modes.json
-{
-  "modes": {
-    "android_light": {
-      "line_region": { "x_pct": 0.22, "y_pct": 0.155, "w_pct": 0.56, "h_pct": 0.045 },
-      "note": "Baris anggota Android Light"
-    },
-    "android_dark": {
-      "line_region": { "x_pct": 0.22, "y_pct": 0.165, "w_pct": 0.56, "h_pct": 0.045 },
-      "note": "Android Dark"
-    },
-    "ios_light": {
-      "line_region": { "x_pct": 0.18, "y_pct": 0.205, "w_pct": 0.64, "h_pct": 0.055 },
-      "note": "iOS Light"
-    },
-    "ios_dark": {
-      "line_region": { "x_pct": 0.18, "y_pct": 0.205, "w_pct": 0.64, "h_pct": 0.055 },
-      "note": "iOS Dark"
-    }
-  }
-}

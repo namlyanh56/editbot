@@ -5,24 +5,48 @@
       "match_min_width": 600,
       "match_max_width": 1600,
       "region": {
-        "x_pct": 0.40,
-        "y_pct": 0.135,
-        "w_pct": 0.15,
+        "x_pct": 0.38,
+        "y_pct": 0.155,
+        "w_pct": 0.18,
         "h_pct": 0.030
       },
-      "notes": "Perkiraan area angka anggota dekat header grup"
+      "notes": "Android Light - area 'Grup · NN anggota'"
     },
     {
       "name": "android_default_dark",
       "match_min_width": 600,
       "match_max_width": 1600,
       "region": {
-        "x_pct": 0.40,
-        "y_pct": 0.135,
-        "w_pct": 0.15,
+        "x_pct": 0.38,
+        "y_pct": 0.155,
+        "w_pct": 0.18,
         "h_pct": 0.030
       },
-      "notes": "Dark mode sama untuk fallback awal"
+      "notes": "Android Dark"
+    },
+    {
+      "name": "ios_light",
+      "match_min_width": 600,
+      "match_max_width": 1600,
+      "region": {
+        "x_pct": 0.36,
+        "y_pct": 0.205,
+        "w_pct": 0.22,
+        "h_pct": 0.035
+      },
+      "notes": "iOS Light mode perkiraan"
+    },
+    {
+      "name": "ios_dark",
+      "match_min_width": 600,
+      "match_max_width": 1600,
+      "region": {
+        "x_pct": 0.36,
+        "y_pct": 0.205,
+        "w_pct": 0.22,
+        "h_pct": 0.035
+      },
+      "notes": "iOS Dark (penyesuaian sama dulu)"
     }
   ]
 }

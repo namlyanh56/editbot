@@ -5,10 +5,6 @@ import cv2 as cv
 import os
 
 def get_safe_font_path(preferred_path: str) -> str:
-    """
-    Kembalikan path font valid; kalau preferred rusak atau tidak bisa dibuka,
-    fallback ke font sistem.
-    """
     candidates = [
         preferred_path,
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -18,86 +14,87 @@ def get_safe_font_path(preferred_path: str) -> str:
     for c in candidates:
         if c and os.path.exists(c):
             try:
-                ImageFont.truetype(c, 16)
+                ImageFont.truetype(c, 20)
                 return c
             except Exception:
                 continue
-    raise FileNotFoundError("Tidak menemukan font TTF valid (preferred & fallback gagal).")
+    raise FileNotFoundError("Font valid tidak ditemukan.")
 
-def sample_text_color(img_pil, bbox):
-    x,y,w,h = bbox
-    region = img_pil.crop((x, y, x+w, y+h))
+def sample_digit_color(img_pil: Image.Image, digit_bbox: Tuple[int,int,int,int], light_mode: bool):
+    x,y,w,h = digit_bbox
+    region = img_pil.crop((x,y,x+w,y+h)).convert("RGB")
     g = region.convert("L")
     arr = np.array(g)
-    flat = arr.flatten()
-    perc_dark = np.percentile(flat, 30)
-    perc_light = np.percentile(flat, 70)
-    mean_all = np.mean(flat)
     rgb = np.array(region)
-    light_mode = mean_all > 128
+    flat = arr.flatten()
     if light_mode:
-        mask = arr <= (perc_dark + 5)
-        if mask.sum() < 10:
-            return (17,17,17)
-        cols = rgb[mask]
+        # ambil 15% tergelap
+        thr = np.percentile(flat, 15)
+        mask = arr <= thr
+        if mask.sum()<8: mask = arr <= np.percentile(flat,30)
     else:
-        mask = arr >= (perc_light - 5)
-        if mask.sum() < 10:
-            return (233,237,239)
-        cols = rgb[mask]
-    avg = cols.mean(axis=0)
-    return tuple(int(c) for c in avg)
+        thr = np.percentile(flat, 85)
+        mask = arr >= thr
+        if mask.sum()<8: mask = arr >= np.percentile(flat,70)
+    cols = rgb[mask]
+    med = np.median(cols, axis=0)
+    return tuple(int(v) for v in med)
 
 def detect_light_mode(img_pil):
-    arr = np.array(img_pil.resize((32,32)).convert("L"))
+    arr = np.array(img_pil.resize((48,48)).convert("L"))
     return arr.mean() > 128
 
-def estimate_background_color(img_np, bbox, pad=4):
+def estimate_background_color(img_np, bbox, pad=2):
     h_img, w_img = img_np.shape[:2]
     x,y,w,h = bbox
-    samples = []
-    y_top = max(0, y - pad - 4)
-    if y_top >= 0:
-        samples.append(img_np[y_top:y_top+4, x:x+w])
-    y_bottom = min(h_img-4, y + h + pad)
-    if y_bottom+4 <= h_img:
-        samples.append(img_np[y_bottom:y_bottom+4, x:x+w])
-    if not samples:
-        return (255,255,255)
-    cat = np.concatenate(samples, axis=0)
+    strips=[]
+    y1=max(0,y-pad-3)
+    y2=min(h_img-4, y+h+pad)
+    strips.append(img_np[y1:y1+3, x:x+w])
+    strips.append(img_np[y2:y2+3, x:x+w])
+    cat = np.concatenate(strips, axis=0)
     med = np.median(cat.reshape(-1,3), axis=0)
     return tuple(int(v) for v in med)
 
-def compute_font_size_for_height(font_path, target_height, test_text="0123456789"):
-    low, high = 5, 400
-    best = low
-    safe_path = get_safe_font_path(font_path)
-    while low <= high:
-        mid = (low + high)//2
-        font = ImageFont.truetype(safe_path, mid)
-        bbox = font.getbbox(test_text)
-        height = bbox[3]-bbox[1]
-        if height <= target_height:
-            best = mid
-            low = mid + 1
+def compute_font_size_for_height(font_path, target_height):
+    low, high = 4, 400
+    best=low
+    safe = get_safe_font_path(font_path)
+    while low<=high:
+        mid=(low+high)//2
+        font=ImageFont.truetype(safe, mid)
+        h = font.getbbox("0123456789")[3]
+        if h <= target_height:
+            best=mid; low=mid+1
         else:
-            high = mid - 1
+            high=mid-1
     return best
 
 def render_text_supersampled(text, font_path, font_size, color, scale=3):
-    safe_path = get_safe_font_path(font_path)
-    font = ImageFont.truetype(safe_path, font_size*scale)
+    safe = get_safe_font_path(font_path)
+    font = ImageFont.truetype(safe, font_size*scale)
     bbox = font.getbbox(text)
-    w = bbox[2]-bbox[0]
-    h = bbox[3]-bbox[1]
-    img = Image.new("RGBA", (w, h), (0,0,0,0))
-    draw = ImageDraw.Draw(img)
-    draw.text((-bbox[0], -bbox[1]), text, font=font, fill=color)
-    target_w = max(1, w//scale)
-    target_h = max(1, h//scale)
-    img_small = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
-    return img_small
+    w = bbox[2]-bbox[0]; h=bbox[3]-bbox[1]
+    img = Image.new("RGBA",(w,h),(0,0,0,0))
+    d = ImageDraw.Draw(img)
+    d.text((-bbox[0], -bbox[1]), text, font=font, fill=color)
+    target=(max(1,w//scale), max(1,h//scale))
+    return img.resize(target, Image.Resampling.LANCZOS)
 
-def variance_luminance(patch):
-    gray = cv.cvtColor(patch, cv.COLOR_BGR2GRAY)
-    return gray.var()
+def adjust_font_width(font_path, base_size, target_w, target_h, text, color):
+    # naive adjust sampai lebar masuk ±10%
+    size=base_size
+    rendered = render_text_supersampled(text, font_path, size, color, scale=3)
+    for _ in range(12):
+        diff = rendered.width - target_w
+        if abs(diff) <= target_w*0.1:
+            break
+        ratio = target_w / max(1, rendered.width)
+        # scale size
+        size = max(4, int(size * (0.75 + 0.5*ratio)))
+        rendered = render_text_supersampled(text, font_path, size, color, scale=3)
+        if rendered.height > target_h*1.15:
+            # jaga tinggi
+            size = int(size * 0.9)
+            rendered = render_text_supersampled(text, font_path, size, color, scale=3)
+    return rendered

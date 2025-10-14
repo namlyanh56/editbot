@@ -13,6 +13,7 @@ from .detector import (
 from .android_detector import detect_android_members_line
 from .refine import refine_region_digits
 from .image_edit import patch_and_replace_number, replace_members_line_full
+from .templater import patch_with_templates
 from .utils import get_safe_font_path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -24,8 +25,10 @@ logger = logging.getLogger("member_bot")
 HELP_TXT = (
 "Format caption:\n"
 "  123       -> ubah angka anggota (Android light/dark didukung)\n"
+"  123#tpl   -> paksa pakai template digit (jika tersedia)\n"
 "  123#t     -> ubah angka di judul (misal 'Freelance 62')\n"
-"Tips: kirim sebagai File (bukan Photo) supaya tidak terkompres."
+"Tips: kirim sebagai File (bukan Photo) supaya tidak terkompres.\n"
+"Letak template: templates/<android_light|android_dark>/hXX/0.png..9.png"
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -35,9 +38,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     cap = (msg.caption or "").strip().lower()
     target = "members" if "#t" not in cap else "title"
+    force_tpl = "#tpl" in cap
     number = cap.split("#")[0].strip()
     if not number.isdigit():
-        await msg.reply_text("Caption harus angka (opsional #t). Contoh: 123#t")
+        await msg.reply_text("Caption harus angka (opsional #tpl, #t). Contoh: 123#tpl atau 123#t")
         return
 
     photo = msg.photo[-1]
@@ -58,43 +62,80 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if target == "members":
-        # 1) Coba detektor Android (color+OCR kecil)
+        # Android detector (warna hijau + OCR kecil)
         res = detect_android_members_line(img)
-        if res:
-            edited = replace_members_line_full(
-                img,
-                res["line_bbox"],
-                res["digit_bbox"],
-                res["anchor_bbox"],
-                number,
-                font_ok
-            )
-            out = BytesIO(); edited.save(out, format="PNG"); out.seek(0)
-            await msg.reply_photo(out, caption=f"Selesai (android detector) {res['number']} -> {number}")
-            return
 
-        # 2) Fallback: OCR detailed generic
+        if res and force_tpl:
+            # Paksa template
+            try:
+                edited = patch_with_templates(
+                    img,
+                    res["digit_bbox"],
+                    res["anchor_bbox"],
+                    number,
+                    prefer_mode=None
+                )
+                out = BytesIO(); edited.save(out, format="PNG"); out.seek(0)
+                await msg.reply_photo(out, caption=f"Selesai (template) {res['number']} -> {number}")
+                return
+            except Exception as e:
+                logger.warning(f"Template gagal: {e}")
+
+        if res:
+            # Coba re-typeset full line (sangat mulus), fallback template, lalu font
+            try:
+                edited = replace_members_line_full(
+                    img,
+                    res["line_bbox"],
+                    res["digit_bbox"],
+                    res["anchor_bbox"],
+                    number,
+                    font_ok
+                )
+                out = BytesIO(); edited.save(out, format="PNG"); out.seek(0)
+                await msg.reply_photo(out, caption=f"Selesai (retypeset) {res['number']} -> {number}")
+                return
+            except Exception as e:
+                logger.warning(f"Retypeset gagal: {e}")
+                try:
+                    edited = patch_with_templates(
+                        img, res["digit_bbox"], res["anchor_bbox"], number, prefer_mode=None
+                    )
+                    out = BytesIO(); edited.save(out, format="PNG"); out.seek(0)
+                    await msg.reply_photo(out, caption=f"Selesai (template-fallback) {res['number']} -> {number}")
+                    return
+                except Exception as e2:
+                    logger.warning(f"Template fallback gagal: {e2}")
+                    # terakhir: font
+                    x,y,w,h = res["digit_bbox"]
+                    edited = patch_and_replace_number(img, (x,y,w,h), res["number"] or "?", number, font_ok)
+                    out = BytesIO(); edited.save(out, format="PNG"); out.seek(0)
+                    await msg.reply_photo(out, caption=f"Selesai (font-fallback) {res['number']} -> {number}")
+                    return
+
+        # Jika detector Android gagal total → generic OCR → refine → gagal
         gen = detect_members_line_detailed(img)
         if gen:
-            edited = replace_members_line_full(
-                img,
-                # buat line bbox dari union digit+anchor dengan margin
-                (
-                    max(0, min(gen['digit_bbox'][0], gen['anchor_bbox'][0]) - 20),
-                    max(0, min(gen['digit_bbox'][1], gen['anchor_bbox'][1]) - 8),
-                    min(img.width, max(gen['digit_bbox'][0]+gen['digit_bbox'][2], gen['anchor_bbox'][0]+gen['anchor_bbox'][2]) + 20) - max(0, min(gen['digit_bbox'][0], gen['anchor_bbox'][0]) - 20),
-                    min(img.height, max(gen['digit_bbox'][1]+gen['digit_bbox'][3], gen['anchor_bbox'][1]+gen['anchor_bbox'][3]) + 8) - max(0, min(gen['digit_bbox'][1], gen['anchor_bbox'][1]) - 8)
-                ),
-                gen["digit_bbox"],
-                gen["anchor_bbox"],
-                number,
-                font_ok
-            )
-            out = BytesIO(); edited.save(out, format="PNG"); out.seek(0)
-            await msg.reply_photo(out, caption=f"Selesai (generic OCR) {gen['number']} -> {number}")
-            return
+            try:
+                edited = replace_members_line_full(
+                    img,
+                    (
+                        max(0, min(gen['digit_bbox'][0], gen['anchor_bbox'][0]) - 20),
+                        max(0, min(gen['digit_bbox'][1], gen['anchor_bbox'][1]) - 8),
+                        min(img.width, max(gen['digit_bbox'][0]+gen['digit_bbox'][2], gen['anchor_bbox'][0]+gen['anchor_bbox'][2]) + 20) - max(0, min(gen['digit_bbox'][0], gen['anchor_bbox'][0]) - 20),
+                        min(img.height, max(gen['digit_bbox'][1]+gen['digit_bbox'][3], gen['anchor_bbox'][1]+gen['anchor_bbox'][3]) + 8) - max(0, min(gen['digit_bbox'][1], gen['anchor_bbox'][1]) - 8)
+                    ),
+                    gen["digit_bbox"],
+                    gen["anchor_bbox"],
+                    number,
+                    font_ok
+                )
+                out = BytesIO(); edited.save(out, format="PNG"); out.seek(0)
+                await msg.reply_photo(out, caption=f"Selesai (generic OCR) {gen['number']} -> {number}")
+                return
+            except Exception as e:
+                logger.warning(f"Generic retypeset gagal: {e}")
 
-        # 3) Fallback terakhir: refine region statis
         fb = load_fallback_region(img)
         if fb:
             rb = refine_region_digits(img, fb)
@@ -104,7 +145,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await msg.reply_photo(out, caption=f"Selesai (refine fallback) ? -> {number}")
                 return
 
-        await msg.reply_text("Tidak bisa menemukan digit (Android). Kirim sebagai File atau coba #t.")
+        await msg.reply_text("Tidak bisa menemukan digit (Android). Kirim sebagai File atau pakai #tpl (butuh template).")
         return
 
     else:
